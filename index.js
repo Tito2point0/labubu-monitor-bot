@@ -11,7 +11,7 @@ async function checkStock() {
     if (res.data.includes('Add to cart')) {
       console.log("🚨 LABUBU IN STOCK! GO GO GO!");
     } else {
-      console.log("❌ Still sold out...");
+      console.log("❌ Still sold out");
     }
   } catch (err) {
     console.error("⚠️ Error checking product:", err.message);
