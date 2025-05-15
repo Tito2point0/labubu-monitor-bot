@@ -26,7 +26,9 @@ const db = knex({
 })();
 
 const productUrl = process.env.PRODUCT_URL;
-const interval = parseInt(process.env.CHECK_INTERVAL || '5000');
+const interval = parseInt(process.env.CHECK_INTERVAL || '10000');
+const MAX_RETRIES = 3;
+let retryCount = 0;
 
 if (!productUrl) {
   console.error("❌ PRODUCT_URL is not set in .env");
@@ -44,7 +46,11 @@ async function checkStock() {
   });
 
   page.on('console', msg => {
-    console.log(`📦 Console:`, msg.text());
+    const text = msg.text();
+    const isNoise = text.includes("WebGL") || text.includes("CSP") || text.includes("X-Frame");
+    if (!isNoise) {
+      console.log("📦 Console:", text);
+    }
   });
 
   try {
@@ -55,7 +61,6 @@ async function checkStock() {
     const response = await page.goto(productUrl, { waitUntil: 'networkidle2', timeout: 20000 });
     console.log(`📡 Status Code: ${response.status()}`);
 
-    // Handle location popup
     try {
       await page.waitForSelector('.modal-content button', { timeout: 5000 });
       const locationButtons = await page.$$eval('.modal-content button', buttons =>
@@ -69,11 +74,10 @@ async function checkStock() {
         console.log("🌍 Selected location: United States");
         await page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 15000 });
       }
-    } catch (err) {
+    } catch {
       console.log("🌍 No location selector appeared or was already dismissed.");
     }
 
-    // Accept privacy terms
     try {
       const acceptBtn = await page.$x("//button[contains(., 'ACCEPT')]");
       if (acceptBtn.length > 0) {
@@ -81,12 +85,11 @@ async function checkStock() {
         console.log("✅ Accepted Privacy Terms");
         await page.waitForTimeout(500);
       }
-    } catch (err) {
+    } catch {
       console.log("✅ Privacy banner not shown or already accepted.");
     }
 
     await page.waitForSelector('body', { timeout: 15000 });
-
     const buttonTexts = await page.$$eval('button', buttons =>
       buttons.map(btn => btn.innerText.trim().toLowerCase())
     );
@@ -108,6 +111,7 @@ async function checkStock() {
     console.log(`💰 Price: ${price}`);
 
     await db('stock_logs').insert({ status, message });
+    retryCount = 0;
 
   } catch (err) {
     console.error("❌ Error during checkStock:", err.message);
@@ -130,10 +134,19 @@ async function checkStock() {
     }
 
     await db('stock_logs').insert({ status: 'error', message: err.message });
+    retryCount++;
+    if (retryCount >= MAX_RETRIES) {
+      console.error("🚫 Max retries reached. Cooling down...");
+      retryCount = 0;
+      setTimeout(checkStock, interval * 6); // 1-minute cool down
+      await browser.close();
+      return;
+    }
   } finally {
     await browser.close();
     console.log("🧼 Browser session closed.");
+    setTimeout(checkStock, interval);
   }
 }
 
-setInterval(checkStock, interval);
+checkStock();
