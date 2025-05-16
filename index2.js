@@ -1,68 +1,75 @@
-// index.js
-
+// index.js - Full Automation Bot
 const puppeteer = require('puppeteer');
-
+const CHECK_INTERVAL = 10000;
 const PRODUCT_URL = 'https://www.popmart.com/ca/products/1662/DIMOO-Weaving-Wonders-Series-Quilt-Phone-Case-Blind-Box';
-const CHECK_INTERVAL = 10000; // 10 seconds
 
-(async () => {
+async function checkAndAddToCart() {
   const browser = await puppeteer.launch({ headless: false });
   const page = await browser.newPage();
 
-  // Function to monitor product availability
-  const monitorProduct = async () => {
+  try {
+    console.log(`🔎 Monitoring ${PRODUCT_URL} every ${CHECK_INTERVAL / 1000}s...`);
+    await page.goto(PRODUCT_URL, { waitUntil: 'domcontentloaded' });
+
+    // 1. Click "United States"
     try {
-      await page.goto(PRODUCT_URL, { waitUntil: 'networkidle2' });
-
-      // Handle country selection prompt
-      try {
-        await page.waitForSelector('.country-selector', { timeout: 5000 });
-        await page.click('.country-selector .us-option');
-        console.log('Country set to United States.');
-      } catch (e) {
-        console.log('Country selector not found or already set.');
+      await page.waitForSelector('button', { timeout: 5000 });
+      const countryButtons = await page.$$('button');
+      for (const btn of countryButtons) {
+        const text = await btn.evaluate(el => el.textContent.trim());
+        if (text === 'United States') {
+          console.log('🌍 Selecting United States...');
+          await btn.click();
+          await page.waitForNavigation({ waitUntil: 'domcontentloaded' });
+          break;
+        }
       }
-
-      // Accept privacy banner
-      try {
-        await page.waitForSelector('.privacy-banner .accept-button', { timeout: 5000 });
-        await page.click('.privacy-banner .accept-button');
-        console.log('Privacy banner accepted.');
-      } catch (e) {
-        console.log('Privacy banner not found or already accepted.');
-      }
-
-      // Wait for product details to load
-      await page.waitForSelector('.product-details', { timeout: 10000 });
-
-      // Check if product is in stock
-      const isInStock = await page.evaluate(() => {
-        const stockElement = document.querySelector('.stock-status');
-        return stockElement && stockElement.textContent.includes('In Stock');
-      });
-
-      if (isInStock) {
-        console.log('Product is in stock. Attempting to add to cart.');
-
-        // Click 'Add to Cart' button
-        await page.click('.add-to-cart-button');
-
-        // Wait for confirmation
-        await page.waitForSelector('.cart-confirmation', { timeout: 5000 });
-        console.log('Product added to cart successfully.');
-      } else {
-        console.log('Product is still out of stock.');
-      }
-    } catch (error) {
-      console.error('Error during monitoring:', error);
+    } catch (e) {
+      console.log('🌎 No country selector found.');
     }
-  };
 
-  // Initial check
-  await monitorProduct();
+    // 2. Click Accept Terms
+    try {
+      const acceptBtn = await page.$x("//button[contains(., 'ACCEPT')]");
+      if (acceptBtn.length > 0) {
+        console.log('✅ Accepting terms...');
+        await acceptBtn[0].click();
+        await page.waitForTimeout(1000);
+      }
+    } catch (e) {
+      console.log('✅ Terms already accepted.');
+    }
 
-  // Set interval for continuous monitoring
-  setInterval(async () => {
-    await monitorProduct();
-  }, CHECK_INTERVAL);
-})();
+    // 3. Wait for main product buttons
+    await page.waitForSelector('button', { timeout: 10000 });
+
+    const buttons = await page.$$eval('button', els =>
+      els.map(el => el.textContent.trim().toLowerCase())
+    );
+
+    const addToBag = buttons.find(txt => txt.includes('add to bag'));
+
+    if (addToBag) {
+      console.log('🚨 Product IN STOCK! Attempting to add to bag...');
+      const matchingBtn = (await page.$$('button')).find(async el => {
+        const text = await el.evaluate(elm => elm.textContent.toLowerCase());
+        return text.includes('add to bag');
+      });
+      if (matchingBtn) {
+        await matchingBtn.click();
+        console.log('🛒 Clicked add to bag.');
+      }
+    } else {
+      console.log('❌ Still sold out.');
+    }
+
+  } catch (err) {
+    console.error('❌ Error during check:', err.message);
+  } finally {
+    await browser.close();
+    console.log('🧼 Closed browser session.');
+    setTimeout(checkAndAddToCart, CHECK_INTERVAL);
+  }
+}
+
+checkAndAddToCart();
